@@ -1,11 +1,15 @@
 unit BrookLogger;
 
+{$I BrookDefines.inc}
+
 interface
 
 uses
   RTLConsts,
+{$IFDEF FPC}
+  Math,
+{$ELSE}
   Types,
-{$IFNDEF FPC}
   IOUtils,
 {$ENDIF}
   SysUtils,
@@ -88,17 +92,30 @@ type
     property FileName: TFileName read FFileName;
   end;
 
-  TBrookLoggerLevels = record
-    Info: string;
-    Hint: string;
-    Warn: string;
-    Debug: string;
-    Error: string;
+  TBrookLoggerLevels = class(TPersistent)
+  private
+    FInfo: string;
+    FHint: string;
+    FWarn: string;
+    FDebug: string;
+    FError: string;
+  public
+    procedure Assign(ASource: TPersistent); override;
+  published
+    property Info: string read FInfo write FInfo;
+    property Hint: string read FHint write FHint;
+    property Warn: string read FWarn write FWarn;
+    property Debug: string read FDebug write FDebug;
+    property Error: string read FError write FError;
   end;
+
+{$IFNDEF FPC}
 
   TBrookLoggerTraceProc = reference to procedure;
 
   TBrookLoggerTraceFunc<T> = reference to function: T;
+
+{$ENDIF}
 
   TBrookLogger = class(TComponent)
   private
@@ -122,6 +139,7 @@ type
     function CreateOptions: TStringList; virtual;
     function CreateOutput(AFilters,
       AOptions: TStringList): TBrookLoggerOutput; virtual;
+    function CreateLevels: TBrookLoggerLevels; virtual;
     procedure DoOpen; virtual;
     procedure DoClose; virtual;
     procedure CheckActive; inline;
@@ -140,12 +158,14 @@ type
     procedure Warn(const AMessage: string); inline;
     procedure Debug(const AMessage: string); inline;
     procedure Error(AException: Exception); inline;
+{$IFNDEF FPC}
     procedure Trace(AProc: TBrookLoggerTraceProc; const AStartingMsg,
       AFinishingMsg: string); overload; inline;
     procedure Trace(AProc: TBrookLoggerTraceProc); overload; inline;
     function Trace<T>(AFunc: TBrookLoggerTraceFunc<T>; const AStartingMsg,
       AFinishingMsg: string): T; overload; inline;
     function Trace<T>(AFunc: TBrookLoggerTraceFunc<T>): T; overload; inline;
+{$ENDIF}
     property Output: TBrookLoggerOutput read GetOutput;
   published
     property Active: Boolean read FActive write SetActive stored IsActiveStored;
@@ -180,7 +200,7 @@ class function TBrookLoggerOutput.InternalFormat(const ALevel,
   AMessage: string): string;
 begin
   Result := Concat(FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now), ' ', ALevel,
-    ': ', AMessage.TrimRight, sLineBreak);
+    ': ', AMessage.TrimRight);
 end;
 
 class function TBrookLoggerOutput.FormatLog(const ALevel,
@@ -301,13 +321,13 @@ end;
 
 procedure TBrookLoggerOutputFile.WriteLog(const AMsg: string);
 var
-  VBytes: TBytes;
+  S: string;
 begin
   if not Assigned(FHandle) then
     Exit;
-  VBytes := FEncoding.GetBytes(AMsg);
+  S := Concat(AMsg, sLineBreak);
   FHandle.Seek(0, TSeekOrigin.soEnd);
-  FHandle.WriteBuffer(VBytes, Length(VBytes));
+  FHandle.WriteBuffer(S[1], Length(S));
 end;
 
 class function TBrookLoggerOutputFile.GetName: string;
@@ -332,6 +352,25 @@ begin
   WriteLog(FormatFail(ALevel, AException));
 end;
 
+{ TBrookLoggerLevels }
+
+procedure TBrookLoggerLevels.Assign(ASource: TPersistent);
+var
+  VSrc: TBrookLoggerLevels;
+begin
+  if ASource is TBrookLoggerLevels then
+  begin
+    VSrc := ASource as TBrookLoggerLevels;
+    FInfo := VSrc.Info;
+    FHint := VSrc.Hint;
+    FWarn := VSrc.Warn;
+    FDebug := VSrc.Debug;
+    FError := VSrc.Error;
+  end
+  else
+    inherited Assign(ASource);
+end;
+
 { TBrookLogger }
 
 constructor TBrookLogger.Create(AOwner: TComponent);
@@ -339,6 +378,7 @@ begin
   inherited Create(AOwner);
   FFilters := CreateFilters;
   FOptions := CreateOptions;
+  FLevels := CreateLevels;
   FLevels.Info := SBrookLevelInfo;
   FLevels.Hint := SBrookLevelHint;
   FLevels.Warn := SBrookLevelWarn;
@@ -350,6 +390,7 @@ end;
 destructor TBrookLogger.Destroy;
 begin
   SetActive(False);
+  FLevels.Free;
   FOptions.Free;
   FFilters.Free;
   inherited Destroy;
@@ -369,10 +410,29 @@ begin
   Result := TStringList.Create;
 end;
 
+function TBrookLogger.GetOutputClass: TBrookLoggerOutputClass;
+var
+  C: TPersistentClass;
+  N: string;
+begin
+  N := Concat(BROOK_LOGGER_TAG, FOutputName);
+  C := Classes.GetClass(N);
+  if Assigned(C) and (not C.InheritsFrom(TBrookLoggerOutput)) then
+    raise EInvalidCast.CreateFmt(SBrookInvalidOutputClass, [C.ClassName]);
+  Result := TBrookLoggerOutputClass(C);
+  if not Assigned(Result) then
+    raise EClassNotFound.CreateFmt(SBrookUnknownOutputName, [FOutputName]);
+end;
+
 function TBrookLogger.CreateOutput(AFilters,
   AOptions: TStringList): TBrookLoggerOutput;
 begin
   Result := GetOutputClass.Create(AFilters, AOptions);
+end;
+
+function TBrookLogger.CreateLevels: TBrookLoggerLevels;
+begin
+  Result := TBrookLoggerLevels.Create;
 end;
 
 procedure TBrookLogger.CheckOutputName;
@@ -410,20 +470,6 @@ begin
     else
       raise;
   end;
-end;
-
-function TBrookLogger.GetOutputClass: TBrookLoggerOutputClass;
-var
-  C: TPersistentClass;
-  N: string;
-begin
-  N := Concat(BROOK_LOGGER_TAG, FOutputName);
-  C := Classes.GetClass(N);
-  if Assigned(C) and (not C.InheritsFrom(TBrookLoggerOutput)) then
-    raise EInvalidCast.CreateFmt(SBrookInvalidOutputClass, [C.ClassName]);
-  Result := TBrookLoggerOutputClass(C);
-  if not Assigned(Result) then
-    raise EClassNotFound.CreateFmt(SBrookUnknownOutputName, [FOutputName]);
 end;
 
 procedure TBrookLogger.DoOpen;
@@ -546,6 +592,8 @@ begin
   Fail(FLevels.Error, AException);
 end;
 
+{$IFNDEF FPC}
+
 procedure TBrookLogger.Trace(AProc: TBrookLoggerTraceProc; const AStartingMsg,
   AFinishingMsg: string);
 begin
@@ -599,6 +647,8 @@ begin
       Error(E);
   end;
 end;
+
+{$ENDIF}
 
 initialization
   RegisterClassAlias(TBrookLoggerOutputConsole,
