@@ -145,6 +145,7 @@ implementation
 
 uses
   BrookLibraryLoader,
+  BrookLogger,
   BrookMathExpression,
   BrookMediaTypes,
   BrookURLEntryPoints,
@@ -180,6 +181,7 @@ procedure Register;
 begin
   RegisterComponents('Brook', [
     TBrookLibraryLoader,
+    TBrookLogger,
     TBrookMathExpression,
     TBrookMIME,
     TBrookURLEntryPoints,
