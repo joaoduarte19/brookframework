@@ -273,7 +273,7 @@ var
 begin
   FEncoding := AEncoding;
   if not Assigned(FEncoding) then
-    FEncoding := TEncoding.Default;
+    FEncoding := TEncoding.UTF8;
   if FileExists(AFileName) then
     VMode := fmOpenReadWrite
   else
@@ -321,13 +321,13 @@ end;
 
 procedure TBrookLoggerOutputFile.WriteLog(const AMsg: string);
 var
-  S: string;
+  VBuffer: TBytes;
 begin
   if not Assigned(FHandle) then
     Exit;
-  S := Concat(AMsg, sLineBreak);
+  VBuffer := FEncoding.GetBytes(Concat(AMsg, sLineBreak));
   FHandle.Seek(0, TSeekOrigin.soEnd);
-  FHandle.WriteBuffer(S[1], Length(S));
+  FHandle.WriteBuffer(VBuffer[0], FEncoding.GetCharCount(VBuffer));
 end;
 
 class function TBrookLoggerOutputFile.GetName: string;
